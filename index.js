@@ -80,27 +80,36 @@ client.on("guildMemberAdd", async (member) => {
 
 async function generateTriviaQuestion() {
   const response = await openai.chat.completions.create({
-    model: "gpt-4o",
+    model: "gpt-3.5-turbo",
     messages: [
       {
         role: "system",
         content: `
-          Bạn là một bot tạo câu hỏi quiz chuyên nghiệp về bóng đá. Hãy tạo câu hỏi theo format sau:
-          [Câu hỏi]
-          A. [Đáp án A]
-          B. [Đáp án B]
-          C. [Đáp án C]
-          D. [Đáp án D]
-          ---
-          Đáp án đúng: [A/B/C/D]
-          Giải thích: [Giải thích chi tiết về đáp án đúng]
-        `,
+              Bạn là một bot chuyên tạo câu hỏi quiz về bóng đá chuyên nghiệp, với kiến thức phong phú về lịch sử bóng đá, cầu thủ, câu lạc bộ, huấn luyện viên và các khía cạnh khác nhau trong môn thể thao này. Hãy tạo câu hỏi theo định dạng sau:
+              [Câu hỏi]
+              A. [Đáp án A]
+              B. [Đáp án B]
+              C. [Đáp án C]
+              D. [Đáp án D]
+              ---
+              Đáp án đúng: [A/B/C/D]
+              Giải thích: [Giải thích chi tiết về đáp án đúng]
+
+              Đảm bảo rằng các câu hỏi bao gồm các chủ đề đa dạng và không chỉ tập trung vào đội tuyển quốc gia, ví dụ:
+              - **Cầu thủ huyền thoại**: thành tích cá nhân, những khoảnh khắc đáng nhớ, kỷ lục đặc biệt và sự nghiệp tại câu lạc bộ và đội tuyển.
+              - **Câu lạc bộ nổi tiếng**: lịch sử, thành tích đáng chú ý, sự kiện đặc biệt, các kỷ lục của CLB trong nước và quốc tế.
+              - **Huấn luyện viên nổi bật**: các chiến thuật độc đáo, thành tích huấn luyện nổi bật, ảnh hưởng của họ trong bóng đá hiện đại.
+              - **Các trận đấu kinh điển**: thông tin về trận đấu kinh điển giữa các câu lạc bộ và đội tuyển, kịch bản hấp dẫn hoặc kết quả bất ngờ.
+              - **Những sự kiện và câu chuyện ít được biết đến** trong bóng đá quốc tế và câu lạc bộ, như các cầu thủ chưa nổi tiếng hoặc các sự kiện lịch sử quan trọng nhưng ít người biết đến.
+
+              Câu hỏi cần có độ khó vừa phải để thách thức các chuyên gia bóng đá, đảm bảo thông tin chính xác và đáng tin cậy.
+            `,
       },
       {
         role: "user",
         content: `
-          Bạn là một chuyên gia về lịch sử bóng đá quốc tế. Khi tạo câu hỏi, hãy đảm bảo rằng chủ đề có độ khó cao.
-        `,
+              Bạn là một chuyên gia về lịch sử bóng đá toàn diện, có hiểu biết sâu sắc về cầu thủ, câu lạc bộ, huấn luyện viên và các sự kiện đáng nhớ. Khi tạo câu hỏi, đảm bảo rằng các chủ đề phong phú và đa dạng, bao gồm thông tin từ cấp độ câu lạc bộ đến đội tuyển, từ những chiến thuật đặc biệt của các huấn luyện viên đến những thành tích cá nhân nổi bật của cầu thủ. Tránh tập trung quá nhiều vào đội tuyển quốc gia và mở rộng sang các khía cạnh thú vị khác trong bóng đá.
+            `,
       },
     ],
     temperature: 1.0,
