@@ -8,6 +8,7 @@ const {
 } = require("discord.js");
 const { OpenAI } = require("openai");
 require("dotenv").config();
+const axios = require("axios");
 
 const client = new Client({
   intents: [
@@ -132,7 +133,7 @@ async function generateTriviaQuestion() {
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  if (message.content.startsWith("!quiz")) {
+  if (message.content.startsWith("!1")) {
     const args = message.content.split(" ");
     const delay = args[1] ? parseInt(args[1]) * 1000 : 10000;
 
@@ -215,6 +216,183 @@ client.on("messageCreate", async (message) => {
 // Xử lý lỗi không mong muốn
 process.on("unhandledRejection", (error) => {
   console.error("Lỗi không xử lý được:", error);
+});
+
+const prefix = "!";
+
+// Map các địa điểm đặc biệt với tọa độ
+const specialLocations = {
+  "ba vi": { lat: 21.0811, lon: 105.3665, name: "Ba Vì" },
+  "tam dao": { lat: 21.4593, lon: 105.6469, name: "Tam Đảo" },
+  sapa: { lat: 22.3364, lon: 103.8438, name: "Sa Pa" },
+  // Thêm các địa điểm khác nếu cần
+};
+
+const weatherEmojis = {
+  Clear: "☀️",
+  Clouds: "☁️",
+  Rain: "🌧️",
+  Drizzle: "🌦️",
+  Thunderstorm: "⛈️",
+  Snow: "❄️",
+  Mist: "🌫️",
+  Fog: "🌫️",
+  Haze: "🌫️",
+};
+
+// Hàm chuyển đổi UV Index thành mức độ
+function getUVLevel(uvi) {
+  if (uvi <= 2) return "Thấp";
+  if (uvi <= 5) return "Trung bình";
+  if (uvi <= 7) return "Cao";
+  if (uvi <= 10) return "Rất cao";
+  return "Nguy hiểm";
+}
+
+client.on("ready", () => {
+  console.log(`Bot đã sẵn sàng với tên ${client.user.tag}!`);
+});
+
+client.on("messageCreate", async (message) => {
+  if (!message.content.startsWith(prefix) || message.author.bot) return;
+
+  const args = message.content.slice(prefix.length).trim().split(/ +/);
+  const command = args.shift().toLowerCase();
+
+  if (command === "thoitiet") {
+    const locationInput = args.join(" ").toLowerCase();
+    if (!locationInput)
+      return message.reply(
+        "Vui lòng nhập tên địa điểm. Ví dụ: !thoitiet Ba Vi"
+      );
+
+    try {
+      let weatherData;
+      if (specialLocations[locationInput]) {
+        // Sử dụng tọa độ cho các địa điểm đặc biệt
+        const location = specialLocations[locationInput];
+        const response = await axios.get(
+          `https://api.openweathermap.org/data/2.5/weather?lat=${location.lat}&lon=${location.lon}&appid=${process.env.WEATHER_API_KEY}&units=metric&lang=vi`
+        );
+        weatherData = response.data;
+        weatherData.name = location.name; // Ghi đè tên địa điểm
+      } else {
+        // Tìm kiếm thông thường theo tên
+        const response = await axios.get(
+          `http://api.openweathermap.org/data/2.5/weather?q=${locationInput},vietnam&appid=${process.env.WEATHER_API_KEY}&units=metric&lang=vi`
+        );
+        weatherData = response.data;
+      }
+
+      const weatherEmoji = weatherEmojis[weatherData.weather[0].main] || "🌡️";
+
+      // Định dạng hướng gió
+      const windDirection = () => {
+        const deg = weatherData.wind.deg;
+        if (deg >= 337.5 || deg < 22.5) return "Bắc";
+        if (deg >= 22.5 && deg < 67.5) return "Đông Bắc";
+        if (deg >= 67.5 && deg < 112.5) return "Đông";
+        if (deg >= 112.5 && deg < 157.5) return "Đông Nam";
+        if (deg >= 157.5 && deg < 202.5) return "Nam";
+        if (deg >= 202.5 && deg < 247.5) return "Tây Nam";
+        if (deg >= 247.5 && deg < 292.5) return "Tây";
+        return "Tây Bắc";
+      };
+
+      // Khuyến nghị thời tiết
+      const getWeatherAdvice = (temp, humidity, windSpeed, description) => {
+        let advice = [];
+        if (temp >= 35) {
+          advice.push("🌡️ Nhiệt độ cao, hạn chế hoạt động ngoài trời");
+        } else if (temp <= 15) {
+          advice.push("🧥 Thời tiết lạnh, nên mặc ấm");
+        }
+        if (humidity >= 80) {
+          advice.push("💧 Độ ẩm cao, cẩn thận các thiết bị điện tử");
+        }
+        if (windSpeed >= 10) {
+          advice.push("🌪️ Gió mạnh, cẩn thận khi di chuyển");
+        }
+        if (description.includes("mưa")) {
+          advice.push("☔ Có mưa, nhớ mang theo ô/áo mưa");
+        }
+        return advice.join("\n");
+      };
+
+      const advice = getWeatherAdvice(
+        weatherData.main.temp,
+        weatherData.main.humidity,
+        weatherData.wind.speed,
+        weatherData.weather[0].description
+      );
+
+      const weatherEmbed = new EmbedBuilder()
+        .setColor("#0099ff")
+        .setTitle(`${weatherEmoji} Thời tiết tại ${weatherData.name}, Việt Nam`)
+        .setDescription(`Cập nhật lúc: ${new Date().toLocaleString("vi-VN")}`)
+        .addFields(
+          {
+            name: "Nhiệt độ",
+            value: `🌡️ ${weatherData.main.temp.toFixed(1)}°C`,
+            inline: true,
+          },
+          {
+            name: "Cảm giác như",
+            value: `🌡️ ${weatherData.main.feels_like.toFixed(1)}°C`,
+            inline: true,
+          },
+          {
+            name: "Nhiệt độ cao/thấp",
+            value: `↑ ${weatherData.main.temp_max.toFixed(
+              1
+            )}°C / ↓ ${weatherData.main.temp_min.toFixed(1)}°C`,
+            inline: true,
+          },
+          {
+            name: "Độ ẩm",
+            value: `💧 ${weatherData.main.humidity}%`,
+            inline: true,
+          },
+          {
+            name: "Gió",
+            value: `🌬️ ${weatherData.wind.speed.toFixed(
+              1
+            )} m/s\n${windDirection()}`,
+            inline: true,
+          },
+          {
+            name: "Mây che phủ",
+            value: `☁️ ${weatherData.clouds.all}%`,
+            inline: true,
+          },
+          {
+            name: "Thời tiết",
+            value: `${weatherEmoji} ${weatherData.weather[0].description}`,
+            inline: true,
+          },
+          {
+            name: "Áp suất",
+            value: `${weatherData.main.pressure} hPa`,
+            inline: true,
+          },
+          {
+            name: "Khuyến nghị",
+            value: advice || "Thời tiết thuận lợi cho các hoạt động ngoài trời",
+          }
+        )
+        .setTimestamp()
+        .setFooter({
+          text: "Dữ liệu được cập nhật mỗi 10 phút | Powered by OpenWeather API",
+        });
+
+      message.reply({ embeds: [weatherEmbed] });
+    } catch (error) {
+      console.error(error);
+      message.reply(
+        "❌ Không tìm thấy thông tin thời tiết cho địa điểm này. Vui lòng kiểm tra lại tên địa điểm."
+      );
+    }
+  }
 });
 
 // Đăng nhập bot
