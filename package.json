@@ -8,18 +8,24 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "@discord-player/extractor": "^4.5.1",
+    "@googlemaps/google-maps-services-js": "^3.4.0",
     "axios": "^1.7.7",
-    "discord-player": "^6.7.1",
+    "discord-player": "^6.6.2",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
+    "ffmpeg-static": "^5.2.0",
     "node-fetch": "^3.3.2",
     "openai": "^4.71.0",
-    "ytdl-core": "^4.11.5"
+    "opusscript": "^0.0.8"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"
   },
   "engines": {
     "node": "^20.0.0"
-  }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }
