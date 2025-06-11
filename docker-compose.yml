@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build: .
+    container_name: discord-welcome-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - /app/node_modules 
