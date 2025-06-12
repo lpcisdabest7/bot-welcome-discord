@@ -9,6 +9,9 @@ const {
 const { OpenAI } = require("openai");
 require("dotenv").config();
 const axios = require("axios");
+const ExcelJS = require("exceljs");
+const readline = require("readline");
+const fs = require("fs");
 
 const client = new Client({
   intents: [
@@ -16,6 +19,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
   ],
 });
 
@@ -36,6 +40,7 @@ const config = {
   ],
 };
 
+const activePolls = new Map();
 const activeGames = new Map();
 
 // Sự kiện khi bot sẵn sàng
@@ -212,11 +217,350 @@ client.on("messageCreate", async (message) => {
       }
     }
   }
+
+  // Handle food ordering commands
+  if (message.content.includes("eat:")) {
+    const timeEatMatch = message.content.match(/^time:(\d+),eat:([^,\s]+)$/);
+    const eatOnlyMatch = message.content.match(/^eat:([^,\s]+)$/);
+
+    let merchantId;
+    let pollDurationMinutes = 60;
+
+    if (timeEatMatch) {
+      pollDurationMinutes = parseInt(timeEatMatch[1]);
+      merchantId = timeEatMatch[2];
+    } else if (eatOnlyMatch) {
+      merchantId = eatOnlyMatch[1];
+    } else {
+      await message.reply(
+        "❌ Format không đúng. Vui lòng sử dụng: `time:[phút],eat:[merchant-id]` hoặc `eat:[merchant-id]`"
+      );
+      return;
+    }
+
+    try {
+      await message.reply("🔍 Đang tìm kiếm menu...");
+
+      const menu = await fetchMenu(merchantId);
+      const categories = menu.categories.filter((cat) => cat.items.length > 0);
+
+      const today = new Date();
+      const dateOptions = {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      };
+      const vietnameseDate = today.toLocaleDateString("vi-VN", dateOptions);
+
+      let menuNumber = 1;
+      const menuItems = new Map();
+
+      await message.channel.send(
+        `**🍽️ Hôm nay ăn gì? - ${vietnameseDate}**\nThời gian còn lại: ${pollDurationMinutes} phút\n`
+      );
+
+      let currentSection = "";
+      let currentItems = [];
+
+      async function sendItemChunk(sectionName, items) {
+        if (items.length === 0) return;
+
+        let chunkText = sectionName ? `**${sectionName}**\n\n` : "";
+        for (const item of items) {
+          chunkText += item;
+        }
+        await message.channel.send(chunkText);
+      }
+
+      for (const category of categories) {
+        if (currentItems.length > 0 && category.name.includes("**")) {
+          await sendItemChunk(currentSection, currentItems);
+          currentItems = [];
+        }
+
+        if (category.name.includes("**")) {
+          currentSection = category.name;
+        }
+
+        for (const item of category.items) {
+          const price = item.priceInMinorUnit
+            ? `${item.priceInMinorUnit.toLocaleString()} VNĐ`
+            : "N/A";
+          const itemText = `\`${menuNumber}\` ${item.name} - ${price}\n`;
+
+          menuItems.set(menuNumber, {
+            name: item.name,
+            price: price,
+            category: category.name,
+          });
+          menuNumber++;
+
+          currentItems.push(itemText);
+
+          if (currentItems.length >= 10) {
+            await sendItemChunk(currentSection, currentItems);
+            currentItems = [];
+            currentSection = "";
+          }
+        }
+      }
+
+      if (currentItems.length > 0) {
+        await sendItemChunk(currentSection, currentItems);
+      }
+
+      const instructionsText =
+        "**Cách đặt món:**\n" +
+        "• Gõ số món ăn bạn muốn chọn (VD: `1` hoặc `1 2 3`)\n" +
+        "• Có thể chọn nhiều món cùng lúc\n" +
+        `• Khảo sát sẽ kết thúc sau ${pollDurationMinutes} phút\n`;
+
+      const pollMessage = await message.channel.send(instructionsText);
+
+      activePolls.set(pollMessage.id, {
+        items: menuItems,
+        selections: new Map(),
+        endTime: Date.now() + pollDurationMinutes * 60000,
+        userMessages: new Map(),
+      });
+
+      setTimeout(async () => {
+        const poll = activePolls.get(pollMessage.id);
+        if (!poll) return;
+
+        await message.channel.send(
+          `**🔔 Khảo sát đã kết thúc sau ${pollDurationMinutes} phút!**`
+        );
+
+        await showListAll(message, true);
+
+        activePolls.delete(pollMessage.id);
+      }, pollDurationMinutes * 60000);
+    } catch (error) {
+      await message.reply(
+        "❌ Không thể lấy được menu. Vui lòng kiểm tra lại ID merchant!"
+      );
+    }
+  }
+
+  // Handle listAll command
+  if (message.content.toLowerCase() === "listall") {
+    await showListAll(message, false);
+    return;
+  }
+
+  // Handle number-only messages for food selection
+  const numberPattern = /^[\d\s]+$/;
+  if (numberPattern.test(message.content.trim())) {
+    const activePoll = Array.from(activePolls.entries()).find(
+      ([_, poll]) => Date.now() < poll.endTime
+    );
+
+    if (!activePoll) {
+      await message.reply("❌ Không có khảo sát nào đang diễn ra!");
+      return;
+    }
+
+    const [pollId, poll] = activePoll;
+    const numbers = message.content.trim().split(/\s+/).map(Number);
+    const validSelections = numbers.filter(
+      (n) => !isNaN(n) && poll.items.has(n)
+    );
+
+    if (validSelections.length > 0) {
+      const userSelections =
+        poll.selections.get(message.author.id) || new Map();
+      validSelections.forEach((n) => {
+        userSelections.set(n, (userSelections.get(n) || 0) + 1);
+      });
+      poll.selections.set(message.author.id, userSelections);
+
+      try {
+        const fetchedMessage = await message.fetch();
+        await fetchedMessage.react("👍");
+      } catch (error) {
+        // Ignore reaction errors
+      }
+
+      const selectedItems = validSelections
+        .map((n) => `• ${poll.items.get(n).name} - ${poll.items.get(n).price}`)
+        .join("\n");
+
+      const replyMsg = await message.reply({
+        content: `✅ Đã ghi nhận lựa chọn của bạn:\n${selectedItems}`,
+        allowedMentions: { repliedUser: false },
+      });
+
+      if (!poll.userMessages) poll.userMessages = new Map();
+      if (!poll.userMessages.get(message.author.id)) {
+        poll.userMessages.set(message.author.id, new Map());
+      }
+      poll.userMessages.get(message.author.id).set(message.id, {
+        selections: validSelections,
+        replyId: replyMsg.id,
+      });
+
+      const filter = (m) => m.id === message.id;
+      const collector = message.channel.createMessageCollector({
+        filter,
+        time: 3600000,
+      });
+
+      collector.on("end", async (collected, reason) => {
+        if (reason === "messageDelete") {
+          try {
+            const replyMessage = await message.channel.messages.fetch(
+              replyMsg.id
+            );
+            await replyMessage.delete();
+          } catch (error) {
+            // Ignore deletion errors
+          }
+
+          if (userSelections) {
+            validSelections.forEach((num) => {
+              const currentCount = userSelections.get(num);
+              if (currentCount === 1) {
+                userSelections.delete(num);
+              } else {
+                userSelections.set(num, currentCount - 1);
+              }
+            });
+            if (userSelections.size === 0) {
+              poll.selections.delete(message.author.id);
+            }
+          }
+
+          if (poll.userMessages?.get(message.author.id)) {
+            poll.userMessages.get(message.author.id).delete(message.id);
+          }
+        }
+      });
+    }
+    return;
+  }
+
+  // Handle weather command
+  if (message.content.startsWith("!tt")) {
+    const args = message.content.split(" ");
+    const location = args.slice(1).join(" ");
+
+    if (!location) {
+      message.reply("Hãy nhập vị trí! Ví dụ: `!weather Hà Đông`");
+      return;
+    }
+
+    try {
+      const { lat, lon, display_name } = await getCoordinates(location);
+      const formattedName = formatDisplayName(display_name);
+
+      const response = await axios.get(
+        "https://api.openweathermap.org/data/2.5/weather",
+        {
+          params: {
+            lat,
+            lon,
+            appid: WEATHER_API_KEY,
+            lang: "vi",
+          },
+        }
+      );
+
+      const data = response.data;
+      const temp = kelvinToCelsius(data.main.temp);
+      const feelsLike = kelvinToCelsius(data.main.feels_like);
+      const tempMin = kelvinToCelsius(data.main.temp_min);
+      const tempMax = kelvinToCelsius(data.main.temp_max);
+      const weather = data.weather[0].description;
+      const weatherMain = data.weather[0].main;
+      const humidity = data.main.humidity;
+      const windSpeed = data.wind.speed.toFixed(1);
+      const windDeg = data.wind.deg;
+      const clouds = data.clouds.all;
+      const pressure = data.main.pressure;
+
+      const currentTime = new Date();
+      const weatherEmoji = weatherEmojis[weatherMain] || "❓";
+      const recommendation = getWeatherRecommendation(
+        parseFloat(temp),
+        humidity,
+        parseFloat(windSpeed),
+        weatherMain
+      );
+
+      const embed = new EmbedBuilder()
+        .setColor(getTemperatureColor(parseFloat(temp)))
+        .setTitle(`${weatherEmoji} Thời tiết tại ${formattedName}`)
+        .setThumbnail(
+          `https://openweathermap.org/img/wn/${data.weather[0].icon}@2x.png`
+        ) // Hiển thị biểu tượng thời tiết
+        .setDescription(`**Cập nhật lúc:** ${formatDateTime(currentTime)}`)
+
+        .addFields(
+          {
+            name: "🌡️ Nhiệt độ",
+            value:
+              `> **Hiện tại:** ${temp}°C\n` +
+              `> **Cảm giác như:** ${feelsLike}°C\n` +
+              `> **Cao/Thấp:** ${tempMax}°C / ${tempMin}°C`,
+            inline: true,
+          },
+          {
+            name: "💧 Độ ẩm",
+            value: `> **Độ ẩm:** ${humidity}%`,
+            inline: true,
+          },
+          {
+            name: "💨 Gió",
+            value:
+              `> **Tốc độ:** ${windSpeed} m/s\n` +
+              `> **Hướng:** ${getWindDirection(windDeg)}`,
+            inline: true,
+          },
+          {
+            name: "☁️ Mây che phủ",
+            value: `> **Mây:** ${clouds}%`,
+            inline: true,
+          },
+          {
+            name: "🌪️ Áp suất",
+            value: `> **Áp suất:** ${pressure} hPa`,
+            inline: true,
+          },
+          {
+            name: "🌥️ Thời tiết",
+            value: `> **Mô tả:** ${weather}`,
+            inline: true,
+          },
+          {
+            name: "📌 Khuyến nghị",
+            value: `${recommendation}`,
+            inline: false,
+          }
+        )
+
+        .setFooter({
+          text: `Dữ liệu cập nhật từ OpenWeather API`,
+          iconURL:
+            "https://openweathermap.org/themes/openweathermap/assets/vendor/owm/img/widgets/logo_60x60.png",
+        })
+        .setTimestamp();
+
+      message.reply({ embeds: [embed] });
+    } catch (error) {
+      console.error("Error:", error);
+      message.reply(
+        "Không tìm thấy thông tin thời tiết cho vị trí bạn yêu cầu. Vui lòng kiểm tra lại."
+      );
+    }
+  }
 });
 
-// Xử lý lỗi không mong muốn
-process.on("unhandledRejection", (error) => {
-  console.error("Lỗi không xử lý được:", error);
+// Handle errors
+client.on("error", (error) => {
+  // Critical errors should still be logged
+  console.error("Discord client error:", error);
 });
 
 //WEATHER
@@ -333,122 +677,218 @@ function formatDateTime(date) {
   return formatter.format(date);
 }
 
-client.on("messageCreate", async (message) => {
+// Add functions from node.js
+async function fetchMenu(merchantId) {
+  const url = `https://portal.grab.com/foodweb/v2/merchants/${merchantId}`;
+  const res = await axios.get(url);
+  return res.data.merchant.menu;
+}
+
+function sumItems(menu, idx) {
+  let sum = 0;
+  for (let i = 0; i < idx; i++) {
+    sum += menu.categories[i].items.length;
+  }
+  return sum;
+}
+
+function generateColumnLetters() {
+  const letters = [];
+  const A = "A".charCodeAt(0);
+  for (let i = 0; i < 26; i++) {
+    letters.push(String.fromCharCode(A + i));
+  }
+  for (let i = 0; i < 26; i++) {
+    for (let j = 0; j < 26; j++) {
+      letters.push(String.fromCharCode(A + i) + String.fromCharCode(A + j));
+    }
+  }
+  return letters;
+}
+
+const clc = generateColumnLetters();
+
+const colors = [
+  "FFFF00",
+  "CCFF33",
+  "66FF99",
+  "00CCCC",
+  "3366FF",
+  "9933FF",
+  "FF3399",
+  "FF3366",
+];
+
+// Add missing showListAll function
+async function showListAll(message, isEnding = false) {
+  let activePoll;
+
+  if (isEnding) {
+    activePoll = Array.from(activePolls.entries())[0];
+  } else {
+    activePoll = Array.from(activePolls.entries()).find(
+      ([_, poll]) => Date.now() < poll.endTime
+    );
+  }
+
+  if (!activePoll) {
+    await message.reply("❌ Không có khảo sát nào đang diễn ra!");
+    return;
+  }
+
+  const [pollId, poll] = activePoll;
+
+  let summary = "**📋 Danh sách đặt món:**\n\n";
+
+  for (const [userId, selections] of poll.selections.entries()) {
+    try {
+      const user = await message.guild.members.fetch(userId);
+      const userName = user.nickname || user.user.username;
+
+      summary += `**${userName}** đã chọn:\n`;
+      for (const [itemNumber, quantity] of selections.entries()) {
+        const item = poll.items.get(itemNumber);
+        const quantityText = quantity > 1 ? ` (${quantity} suất)` : "";
+        summary += `• ${item.name} - ${item.price}${quantityText}\n`;
+      }
+      summary += "\n";
+    } catch (error) {
+      // Ignore user fetch errors
+    }
+  }
+
+  const totalUsers = poll.selections.size;
+  const totalItems = Array.from(poll.selections.values()).reduce(
+    (total, selections) => {
+      return (
+        total +
+        Array.from(selections.values()).reduce((sum, qty) => sum + qty, 0)
+      );
+    },
+    0
+  );
+
+  if (totalUsers === 0) {
+    await message.channel.send(
+      "**❌ Không có ai đặt món trong thời gian khảo sát!**"
+    );
+    return;
+  }
+
+  summary += `\n**Tổng cộng:**\n`;
+  summary += `• ${totalUsers} người đã chọn\n`;
+  summary += `• ${totalItems} suất được đặt\n`;
+
+  const itemCounts = new Map();
+  for (const [_, selections] of poll.selections.entries()) {
+    for (const [itemNumber, quantity] of selections.entries()) {
+      itemCounts.set(itemNumber, (itemCounts.get(itemNumber) || 0) + quantity);
+    }
+  }
+
+  if (itemCounts.size > 0) {
+    summary += "\n**Chi tiết theo món:**\n";
+    const sortedItems = Array.from(itemCounts.entries()).sort(
+      ([, a], [, b]) => b - a
+    );
+
+    let totalPrice = 0;
+    for (const [itemNumber, quantity] of sortedItems) {
+      const item = poll.items.get(itemNumber);
+      const itemPrice = parseInt(item.price.replace(/[^\d]/g, ""));
+      const itemTotalPrice = itemPrice * quantity;
+      totalPrice += itemTotalPrice;
+
+      summary += `• ${item.name}: ${quantity} suất - ${itemPrice.toLocaleString(
+        "vi-VN"
+      )} VNĐ/suất = ${itemTotalPrice.toLocaleString("vi-VN")} VNĐ\n`;
+    }
+
+    summary += `\n**Tổng tiền: ${totalPrice.toLocaleString("vi-VN")} VNĐ**\n`;
+
+    summary += "\n**Chi tiết chia tiền:**\n";
+    const userPortions = new Map();
+    let totalPortions = 0;
+
+    for (const [userId, selections] of poll.selections.entries()) {
+      const userTotalPortions = Array.from(selections.values()).reduce(
+        (sum, qty) => sum + qty,
+        0
+      );
+      userPortions.set(userId, userTotalPortions);
+      totalPortions += userTotalPortions;
+    }
+
+    for (const [userId, portions] of userPortions.entries()) {
+      try {
+        const user = await message.guild.members.fetch(userId);
+        const userName = user.nickname || user.user.username;
+        const userPayment = Math.round((totalPrice * portions) / totalPortions);
+        summary += `• ${userName}: ${portions} suất - ${userPayment.toLocaleString(
+          "vi-VN"
+        )} VNĐ\n`;
+      } catch (error) {
+        // Ignore user fetch errors
+      }
+    }
+  }
+
+  try {
+    await message.channel.send(summary);
+  } catch (error) {
+    if (error.code === 50035) {
+      const chunks = summary.match(/.{1,1900}/g) || [];
+      for (const chunk of chunks) {
+        await message.channel.send(chunk);
+      }
+    }
+  }
+}
+
+// Add message deletion handler
+client.on("messageDelete", async (message) => {
   if (message.author.bot) return;
 
-  if (message.content.startsWith("!tt")) {
-    const args = message.content.split(" ");
-    const location = args.slice(1).join(" ");
+  const activePoll = Array.from(activePolls.entries()).find(
+    ([_, poll]) => Date.now() < poll.endTime
+  );
 
-    if (!location) {
-      message.reply("Hãy nhập vị trí! Ví dụ: `!weather Hà Đông`");
-      return;
+  if (!activePoll) return;
+  const [pollId, poll] = activePoll;
+
+  if (poll.userMessages?.get(message.author.id)?.has(message.id)) {
+    const messageData = poll.userMessages
+      .get(message.author.id)
+      .get(message.id);
+
+    const userSelections = poll.selections.get(message.author.id);
+    if (userSelections) {
+      messageData.selections.forEach((num) => userSelections.delete(num));
+
+      if (userSelections.size === 0) {
+        poll.selections.delete(message.author.id);
+      }
     }
 
     try {
-      const { lat, lon, display_name } = await getCoordinates(location);
-      const formattedName = formatDisplayName(display_name);
-
-      const response = await axios.get(
-        "https://api.openweathermap.org/data/2.5/weather",
-        {
-          params: {
-            lat,
-            lon,
-            appid: WEATHER_API_KEY,
-            lang: "vi",
-          },
-        }
-      );
-
-      const data = response.data;
-      const temp = kelvinToCelsius(data.main.temp);
-      const feelsLike = kelvinToCelsius(data.main.feels_like);
-      const tempMin = kelvinToCelsius(data.main.temp_min);
-      const tempMax = kelvinToCelsius(data.main.temp_max);
-      const weather = data.weather[0].description;
-      const weatherMain = data.weather[0].main;
-      const humidity = data.main.humidity;
-      const windSpeed = data.wind.speed.toFixed(1);
-      const windDeg = data.wind.deg;
-      const clouds = data.clouds.all;
-      const pressure = data.main.pressure;
-
-      const currentTime = new Date();
-      const weatherEmoji = weatherEmojis[weatherMain] || "❓";
-      const recommendation = getWeatherRecommendation(
-        parseFloat(temp),
-        humidity,
-        parseFloat(windSpeed),
-        weatherMain
-      );
-
-      const embed = new EmbedBuilder()
-        .setColor(getTemperatureColor(parseFloat(temp)))
-        .setTitle(`${weatherEmoji} Thời tiết tại ${formattedName}`)
-        .setThumbnail(
-          `https://openweathermap.org/img/wn/${data.weather[0].icon}@2x.png`
-        ) // Hiển thị biểu tượng thời tiết
-        .setDescription(`**Cập nhật lúc:** ${formatDateTime(currentTime)}`)
-
-        .addFields(
-          {
-            name: "🌡️ Nhiệt độ",
-            value:
-              `> **Hiện tại:** ${temp}°C\n` +
-              `> **Cảm giác như:** ${feelsLike}°C\n` +
-              `> **Cao/Thấp:** ${tempMax}°C / ${tempMin}°C`,
-            inline: true,
-          },
-          {
-            name: "💧 Độ ẩm",
-            value: `> **Độ ẩm:** ${humidity}%`,
-            inline: true,
-          },
-          {
-            name: "💨 Gió",
-            value:
-              `> **Tốc độ:** ${windSpeed} m/s\n` +
-              `> **Hướng:** ${getWindDirection(windDeg)}`,
-            inline: true,
-          },
-          {
-            name: "☁️ Mây che phủ",
-            value: `> **Mây:** ${clouds}%`,
-            inline: true,
-          },
-          {
-            name: "🌪️ Áp suất",
-            value: `> **Áp suất:** ${pressure} hPa`,
-            inline: true,
-          },
-          {
-            name: "🌥️ Thời tiết",
-            value: `> **Mô tả:** ${weather}`,
-            inline: true,
-          },
-          {
-            name: "📌 Khuyến nghị",
-            value: `${recommendation}`,
-            inline: false,
-          }
-        )
-
-        .setFooter({
-          text: `Dữ liệu cập nhật từ OpenWeather API`,
-          iconURL:
-            "https://openweathermap.org/themes/openweathermap/assets/vendor/owm/img/widgets/logo_60x60.png",
-        })
-        .setTimestamp();
-
-      message.reply({ embeds: [embed] });
+      const channel = message.channel;
+      const replyMessage = await channel.messages.fetch(messageData.replyId);
+      await replyMessage.delete();
     } catch (error) {
-      console.error("Error:", error);
-      message.reply(
-        "Không tìm thấy thông tin thời tiết cho vị trí bạn yêu cầu. Vui lòng kiểm tra lại."
-      );
+      console.error("Failed to delete reply message:", error);
     }
+
+    poll.userMessages.get(message.author.id).delete(message.id);
   }
 });
-// Đăng nhập bot
-client.login(process.env.DISCORD_TOKEN);
+
+// Export functions for external use
+module.exports = {
+  fetchMenu,
+};
+
+// Login the bot
+client.login(process.env.DISCORD_TOKEN).catch((error) => {
+  // Critical login errors should still be logged
+  console.error("Failed to login:", error);
+});
