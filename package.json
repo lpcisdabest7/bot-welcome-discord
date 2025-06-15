@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@discord-player/extractor": "^4.5.1",
+    "@google-cloud/local-auth": "^3.0.1",
     "@googlemaps/google-maps-services-js": "^3.4.0",
     "axios": "^1.7.7",
     "discord-player": "^6.6.2",
@@ -16,6 +17,7 @@
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
     "ffmpeg-static": "^5.2.0",
+    "googleapis": "^150.0.1",
     "node-fetch": "^3.3.2",
     "openai": "^4.71.0",
     "opusscript": "^0.0.8"

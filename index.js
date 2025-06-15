@@ -12,6 +12,7 @@ const axios = require("axios");
 const ExcelJS = require("exceljs");
 const readline = require("readline");
 const fs = require("fs");
+const { appendToSheet } = require("./sheets");
 
 const client = new Client({
   intents: [
@@ -333,7 +334,34 @@ client.on("messageCreate", async (message) => {
           `**🔔 Khảo sát đã kết thúc sau ${pollDurationMinutes} phút!**`
         );
 
-        await showListAll(message, true);
+        // Get order summary
+        const summary = await showListAll(message, true);
+
+        // Extract data for sheets
+        if (summary && summary.totalItems > 0) {
+          for (const [userId, selections] of poll.selections.entries()) {
+            try {
+              const user = await message.guild.members.fetch(userId);
+              const userName = user.nickname || user.user.username;
+
+              for (const [itemNumber, quantity] of selections.entries()) {
+                const item = poll.items.get(itemNumber);
+                const orderData = {
+                  name: userName,
+                  price: item.price,
+                  quantity: quantity,
+                  itemName: item.name,
+                  status: "Đã đặt",
+                  date: new Date().toLocaleDateString("vi-VN"),
+                };
+
+                await appendToSheet(orderData);
+              }
+            } catch (error) {
+              console.error("Error updating sheets:", error);
+            }
+          }
+        }
 
         activePolls.delete(pollMessage.id);
       }, pollDurationMinutes * 60000);
@@ -721,115 +749,58 @@ const colors = [
 
 // Add missing showListAll function
 async function showListAll(message, isEnding = false) {
-  let activePoll;
+  let summary = "📋 Danh sách đặt món:\n\n";
+  let totalUsers = 0;
+  let totalItems = 0;
+  let totalPrice = 0;
+  const itemCounts = new Map();
+  const userOrders = new Map();
 
-  if (isEnding) {
-    activePoll = Array.from(activePolls.entries())[0];
-  } else {
-    activePoll = Array.from(activePolls.entries()).find(
-      ([_, poll]) => Date.now() < poll.endTime
-    );
-  }
-
-  if (!activePoll) {
-    await message.reply("❌ Không có khảo sát nào đang diễn ra!");
-    return;
-  }
-
-  const [pollId, poll] = activePoll;
-
-  let summary = "**📋 Danh sách đặt món:**\n\n";
-
-  for (const [userId, selections] of poll.selections.entries()) {
-    try {
+  for (const [messageId, poll] of activePolls) {
+    for (const [userId, selections] of poll.selections.entries()) {
+      totalUsers++;
       const user = await message.guild.members.fetch(userId);
       const userName = user.nickname || user.user.username;
 
-      summary += `**${userName}** đã chọn:\n`;
+      summary += `${userName} đã chọn:\n`;
+      let userTotal = 0;
+
       for (const [itemNumber, quantity] of selections.entries()) {
+        totalItems += quantity;
         const item = poll.items.get(itemNumber);
-        const quantityText = quantity > 1 ? ` (${quantity} suất)` : "";
-        summary += `• ${item.name} - ${item.price}${quantityText}\n`;
+
+        // Update item counts
+        const currentCount = itemCounts.get(item.name) || 0;
+        itemCounts.set(item.name, currentCount + quantity);
+
+        const itemPrice = parseInt(item.price.replace(/[^\d]/g, ""));
+        const itemTotal = itemPrice * quantity;
+        userTotal += itemTotal;
+        totalPrice += itemTotal;
+
+        summary += `• ${item.name} - ${item.price}\n`;
       }
+
+      userOrders.set(userName, userTotal);
       summary += "\n";
-    } catch (error) {
-      // Ignore user fetch errors
     }
   }
 
-  const totalUsers = poll.selections.size;
-  const totalItems = Array.from(poll.selections.values()).reduce(
-    (total, selections) => {
-      return (
-        total +
-        Array.from(selections.values()).reduce((sum, qty) => sum + qty, 0)
-      );
-    },
-    0
-  );
-
-  if (totalUsers === 0) {
-    await message.channel.send(
-      "**❌ Không có ai đặt món trong thời gian khảo sát!**"
-    );
-    return;
-  }
-
-  summary += `\n**Tổng cộng:**\n`;
-  summary += `• ${totalUsers} người đã chọn\n`;
-  summary += `• ${totalItems} suất được đặt\n`;
-
-  const itemCounts = new Map();
-  for (const [_, selections] of poll.selections.entries()) {
-    for (const [itemNumber, quantity] of selections.entries()) {
-      itemCounts.set(itemNumber, (itemCounts.get(itemNumber) || 0) + quantity);
-    }
-  }
+  summary += `\nTổng cộng:\n• ${totalUsers} người đã chọn\n• ${totalItems} suất được đặt\n\n`;
 
   if (itemCounts.size > 0) {
-    summary += "\n**Chi tiết theo món:**\n";
-    const sortedItems = Array.from(itemCounts.entries()).sort(
-      ([, a], [, b]) => b - a
-    );
-
-    let totalPrice = 0;
-    for (const [itemNumber, quantity] of sortedItems) {
-      const item = poll.items.get(itemNumber);
-      const itemPrice = parseInt(item.price.replace(/[^\d]/g, ""));
-      const itemTotalPrice = itemPrice * quantity;
-      totalPrice += itemTotalPrice;
-
-      summary += `• ${item.name}: ${quantity} suất - ${itemPrice.toLocaleString(
-        "vi-VN"
-      )} VNĐ/suất = ${itemTotalPrice.toLocaleString("vi-VN")} VNĐ\n`;
+    summary += "Chi tiết theo món:\n";
+    for (const [itemName, count] of itemCounts) {
+      summary += `• ${itemName}: ${count} suất\n`;
     }
+  }
 
-    summary += `\n**Tổng tiền: ${totalPrice.toLocaleString("vi-VN")} VNĐ**\n`;
+  summary += `\nTổng tiền: ${totalPrice.toLocaleString("vi-VN")} VNĐ\n\n`;
 
-    summary += "\n**Chi tiết chia tiền:**\n";
-    const userPortions = new Map();
-    let totalPortions = 0;
-
-    for (const [userId, selections] of poll.selections.entries()) {
-      const userTotalPortions = Array.from(selections.values()).reduce(
-        (sum, qty) => sum + qty,
-        0
-      );
-      userPortions.set(userId, userTotalPortions);
-      totalPortions += userTotalPortions;
-    }
-
-    for (const [userId, portions] of userPortions.entries()) {
-      try {
-        const user = await message.guild.members.fetch(userId);
-        const userName = user.nickname || user.user.username;
-        const userPayment = Math.round((totalPrice * portions) / totalPortions);
-        summary += `• ${userName}: ${portions} suất - ${userPayment.toLocaleString(
-          "vi-VN"
-        )} VNĐ\n`;
-      } catch (error) {
-        // Ignore user fetch errors
-      }
+  if (userOrders.size > 0) {
+    summary += "Chi tiết chia tiền:\n";
+    for (const [userName, total] of userOrders) {
+      summary += `• ${userName}: ${total.toLocaleString("vi-VN")} VNĐ\n`;
     }
   }
 
@@ -843,6 +814,14 @@ async function showListAll(message, isEnding = false) {
       }
     }
   }
+
+  return {
+    totalUsers,
+    totalItems,
+    totalPrice,
+    items: Object.fromEntries(itemCounts),
+    userOrders: Object.fromEntries(userOrders),
+  };
 }
 
 // Add message deletion handler
