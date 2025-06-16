@@ -33,6 +33,7 @@ const config = {
   welcomeChannelIds: process.env.CHANNEL_ID
     ? process.env.CHANNEL_ID.split(",").map((id) => id.trim())
     : [],
+  datcomChannelId: process.env.DATCOM,
   serverRules: [
     "1. Tôn trọng mọi thành viên",
     "2. Không spam và quảng cáo",
@@ -221,6 +222,17 @@ client.on("messageCreate", async (message) => {
 
   // Handle food ordering commands
   if (message.content.includes("eat:")) {
+    // Check if the message is from the correct channel
+    if (
+      !config.datcomChannelId ||
+      message.channelId !== config.datcomChannelId
+    ) {
+      console.log(
+        `Food order command ignored - Expected channel: ${config.datcomChannelId}, Actual channel: ${message.channelId}`
+      );
+      return; // Silently ignore if not in the correct channel
+    }
+
     const timeEatMatch = message.content.match(/^time:(\d+),eat:([^,\s]+)$/);
     const eatOnlyMatch = message.content.match(/^eat:([^,\s]+)$/);
 
@@ -374,6 +386,9 @@ client.on("messageCreate", async (message) => {
 
   // Handle listAll command
   if (message.content.toLowerCase() === "listall") {
+    if (message.channelId !== process.env.DATCOM) {
+      return; // Không phản hồi nếu sai channel
+    }
     await showListAll(message, false);
     return;
   }
@@ -381,6 +396,9 @@ client.on("messageCreate", async (message) => {
   // Handle number-only messages for food selection
   const numberPattern = /^[\d\s]+$/;
   if (numberPattern.test(message.content.trim())) {
+    if (message.channelId !== process.env.DATCOM) {
+      return; // Không phản hồi nếu sai channel
+    }
     const activePoll = Array.from(activePolls.entries()).find(
       ([_, poll]) => Date.now() < poll.endTime
     );
