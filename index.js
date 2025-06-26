@@ -527,6 +527,11 @@ client.on("messageCreate", async (message) => {
       const pressure = data.main.pressure;
 
       const currentTime = new Date();
+      // Calculate timezone offset to Vietnam (GMT+7)
+      const serverOffset = currentTime.getTimezoneOffset(); // Server offset in minutes
+      const vietnamOffset = -7 * 60; // Vietnam is GMT+7, so offset is -420 minutes
+      const offsetDiff = vietnamOffset - serverOffset; // Difference in minutes
+      const vietnamTime = new Date(currentTime.getTime() + (offsetDiff * 60 * 1000));
       const weatherEmoji = weatherEmojis[weatherMain] || "❓";
       const recommendation = getWeatherRecommendation(
         parseFloat(temp),
@@ -541,10 +546,8 @@ client.on("messageCreate", async (message) => {
         .setThumbnail(
           `https://openweathermap.org/img/wn/${data.weather[0].icon}@2x.png`
         ) // Hiển thị biểu tượng thời tiết
-        // + 7 để chuẩn múi giờ việt nam
-
         .setDescription(
-          `**Cập nhật lúc:** ${formatDateTime(currentTime) + 7} (GMT+7) Múi giờ Việt Nam`
+          `**Cập nhật lúc:** ${formatDateTime(vietnamTime)} (GMT+7) Múi giờ Việt Nam`
         )
 
         .addFields(
