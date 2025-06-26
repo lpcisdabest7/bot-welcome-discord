@@ -527,11 +527,8 @@ client.on("messageCreate", async (message) => {
       const pressure = data.main.pressure;
 
       const currentTime = new Date();
-      // Calculate timezone offset to Vietnam (GMT+7)
-      const serverOffset = currentTime.getTimezoneOffset(); // Server offset in minutes
-      const vietnamOffset = -7 * 60; // Vietnam is GMT+7, so offset is -420 minutes
-      const offsetDiff = vietnamOffset - serverOffset; // Difference in minutes
-      const vietnamTime = new Date(currentTime.getTime() + (offsetDiff * 60 * 1000));
+      // Get Vietnam time directly using timezone
+      const vietnamTime = new Date(currentTime.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
       const weatherEmoji = weatherEmojis[weatherMain] || "❓";
       const recommendation = getWeatherRecommendation(
         parseFloat(temp),
