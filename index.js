@@ -544,7 +544,7 @@ client.on("messageCreate", async (message) => {
         // + 7 để chuẩn múi giờ việt nam
 
         .setDescription(
-          `**Cập nhật lúc:** ${formatDateTime(currentTime) + 7} (GMT+7)`
+          `**Cập nhật lúc:** ${formatDateTime(currentTime) + 7} (GMT+7) Múi giờ Việt Nam`
         )
 
         .addFields(
