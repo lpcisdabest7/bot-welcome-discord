@@ -541,7 +541,11 @@ client.on("messageCreate", async (message) => {
         .setThumbnail(
           `https://openweathermap.org/img/wn/${data.weather[0].icon}@2x.png`
         ) // Hiển thị biểu tượng thời tiết
-        .setDescription(`**Cập nhật lúc:** ${formatDateTime(currentTime)}`)
+        // + 7 để chuẩn múi giờ việt nam
+
+        .setDescription(
+          `**Cập nhật lúc:** ${formatDateTime(currentTime) + 7} (GMT+7)`
+        )
 
         .addFields(
           {
