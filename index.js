@@ -229,7 +229,7 @@ client.on("messageCreate", async (message) => {
   }
 
   // Handle URL decoding command
-  if (message.content.startsWith("/url:")) {
+  if (message.content.startsWith("!url")) {
     console.log("URL command detected:", message.content);
     const encodedUrl = message.content.substring(5).trim();
 
