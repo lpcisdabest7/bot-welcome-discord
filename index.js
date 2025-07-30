@@ -12,6 +12,7 @@ const axios = require("axios");
 const ExcelJS = require("exceljs");
 const readline = require("readline");
 const fs = require("fs");
+const { gunzipSync } = require("zlib");
 const { appendToSheet } = require("./sheets");
 
 const client = new Client({
@@ -217,6 +218,50 @@ client.on("messageCreate", async (message) => {
         game.answers.set(message.author.id, answer);
         await message.react("👍");
       }
+    }
+  }
+
+  // Handle test command
+  if (message.content === "/test") {
+    console.log("Test command received from:", message.author.username);
+    await message.reply("✅ Bot đang hoạt động bình thường!");
+    return;
+  }
+
+  // Handle URL decoding command
+  if (message.content.startsWith("/url:")) {
+    console.log("URL command detected:", message.content);
+    const encodedUrl = message.content.substring(5).trim();
+
+    if (!encodedUrl) {
+      await message.reply(
+        "❌ Vui lòng cung cấp URL được mã hóa! Ví dụ: `/url: H4sIAAAAAAACA4WQX0tjQQzFv0roe67t9dbWeXNFdgVxYVfBN8mdm26HbydjJtN2Eb-71P-0hT4EQs7vkMPxRXvAO_h5cQODp6fr3zeX52f3P87-Xtzf_rl6fj5SacVyZWsbAP6CwRqVHwtnw9A5qMejpm6Pa6xnkwabaUs4rceETTua0GnDp566Lx_1GJKDZlxNTqrR60w_1JnoirTjbrMdZOaSzQGlgFEseKo6XlaUWKVaxl08iZqDpjneI6mYOJibpbyrZj_nBW_JouFfiNRj0eBgT0N7XOQ9J3NgvLaj1FN4T-nJzxm9RFPpHUTB18vnq8SRAprSbBY8Zinq2UHJrFvIeyjblLfi1iutelZ8C4ffwu3wyHHpIKl0W8jmVLxhfigOSnyIsopbSIjGuqnCU9_zodccl_IfeZ3YG3eoj2hhwVIMF9nBaDwcDgcvK7TcIpECAAA`"
+      );
+      return;
+    }
+
+    try {
+      console.log(
+        "Attempting to decode URL:",
+        encodedUrl.substring(0, 50) + "..."
+      );
+      const decodedUrl = decodeGzipMax(encodedUrl);
+      console.log("Successfully decoded URL");
+
+      const embed = new EmbedBuilder()
+        .setColor("#00ff00")
+        .setTitle("🔗 URL đã được giải mã")
+        .setDescription(`\`\`\`${decodedUrl}\`\`\``)
+        .setFooter({
+          text: `Giải mã bởi ${message.author.username}`,
+          iconURL: message.author.displayAvatarURL({ dynamic: true }),
+        })
+        .setTimestamp();
+
+      await message.reply({ embeds: [embed] });
+    } catch (error) {
+      console.error("Error decoding URL:", error);
+      await message.reply(`❌ Lỗi giải mã URL: ${error.message}`);
     }
   }
 
@@ -528,7 +573,9 @@ client.on("messageCreate", async (message) => {
 
       const currentTime = new Date();
       // Get Vietnam time directly using timezone
-      const vietnamTime = new Date(currentTime.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
+      const vietnamTime = new Date(
+        currentTime.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
+      );
       const weatherEmoji = weatherEmojis[weatherMain] || "❓";
       const recommendation = getWeatherRecommendation(
         parseFloat(temp),
@@ -544,7 +591,9 @@ client.on("messageCreate", async (message) => {
           `https://openweathermap.org/img/wn/${data.weather[0].icon}@2x.png`
         ) // Hiển thị biểu tượng thời tiết
         .setDescription(
-          `**Cập nhật lúc:** ${formatDateTime(vietnamTime)} (GMT+7) Múi giờ Việt Nam`
+          `**Cập nhật lúc:** ${formatDateTime(
+            vietnamTime
+          )} (GMT+7) Múi giờ Việt Nam`
         )
 
         .addFields(
@@ -883,9 +932,21 @@ client.on("messageDelete", async (message) => {
   }
 });
 
+// URL Decoding Functions
+function decodeGzipMax(base64urlStr) {
+  try {
+    const buffer = Buffer.from(base64urlStr, "base64url");
+    const decompressed = gunzipSync(buffer);
+    return decompressed.toString("utf8");
+  } catch (error) {
+    throw new Error(`Lỗi giải mã URL: ${error.message}`);
+  }
+}
+
 // Export functions for external use
 module.exports = {
   fetchMenu,
+  decodeGzipMax,
 };
 
 // Login the bot
