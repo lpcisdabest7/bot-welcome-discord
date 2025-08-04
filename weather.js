@@ -328,7 +328,7 @@ function formatDateTime(date) {
 // Hàm chính xử lý lệnh thời tiết
 async function handleWeatherCommand(message, location) {
   if (!location) {
-    message.reply("Hãy nhập vị trí! Ví dụ: `!tt Hà Đông`");
+    await message.reply("Hãy nhập vị trí! Ví dụ: `!tt Hà Đông`");
     return;
   }
 
@@ -451,10 +451,10 @@ async function handleWeatherCommand(message, location) {
       })
       .setTimestamp();
 
-    message.reply({ embeds: [embed] });
+    await message.reply({ embeds: [embed] });
   } catch (error) {
     console.error("Error:", error);
-    message.reply(
+    await message.reply(
       "Không tìm thấy thông tin thời tiết cho vị trí bạn yêu cầu. Vui lòng kiểm tra lại."
     );
   }
