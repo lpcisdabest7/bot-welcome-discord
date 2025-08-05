@@ -321,7 +321,6 @@ function formatDateTime(date) {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    timeZone: "Asia/Ho_Chi_Minh",
   });
 }
 
@@ -361,11 +360,10 @@ async function handleWeatherCommand(message, location) {
     const clouds = data.clouds.all;
     const pressure = data.main.pressure;
 
-    const currentTime = new Date();
-    // Get Vietnam time directly using timezone
-    const vietnamTime = new Date(
-      currentTime.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-    );
+    // Get current time in Vietnam timezone (GMT+7)
+    // Since server is at GMT+0, simply add 7 hours
+    const now = new Date();
+    const vietnamTime = new Date(now.getTime() + 7 * 60 * 60 * 1000); // Add 7 hours for GMT+7
     const weatherEmoji = weatherEmojis[weatherMain] || "❓";
     const recommendation = await getWeatherRecommendation(
       parseFloat(temp),
