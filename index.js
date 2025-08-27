@@ -265,6 +265,105 @@ client.on("messageCreate", async (message) => {
     }
   }
 
+  // Handle decode command on replied message containing JSON with "curl"
+  if (message.content.trim() === "!decode") {
+    try {
+      if (!message.reference?.messageId) {
+        await message.reply(
+          "❌ Vui lòng reply vào tin nhắn chứa JSON với trường 'curl' và gõ !decode"
+        );
+        return;
+      }
+
+      const repliedMessage = await message.channel.messages.fetch(
+        message.reference.messageId
+      );
+
+      // Aggregate content from message text and any embeds (description + fields)
+      const embedParts = (repliedMessage.embeds || [])
+        .map((e) => {
+          const desc = e?.description ? String(e.description) : "";
+          const fieldsText = (e?.fields || [])
+            .map((f) => `${f.name ?? ""}\n${f.value ?? ""}`)
+            .join("\n");
+          return [desc, fieldsText].filter(Boolean).join("\n");
+        })
+        .filter((t) => t && t.trim().length > 0);
+      const aggregated = [repliedMessage.content || "", ...embedParts]
+        .filter(Boolean)
+        .join("\n");
+      const rawContent = aggregated.trim();
+      if (!rawContent) {
+        await message.reply(
+          "❌ Tin nhắn được reply không có nội dung văn bản."
+        );
+        return;
+      }
+
+      // Remove code block fences if present
+      const contentWithoutFences = rawContent
+        // Replace fenced code blocks with their inner content
+        .replace(/```[a-zA-Z]*\n([\s\S]*?)```/g, "$1")
+        .trim();
+
+      let curlEncoded;
+      // Try to parse as JSON first
+      try {
+        const startIdx = contentWithoutFences.indexOf("{");
+        const endIdx = contentWithoutFences.lastIndexOf("}");
+        const jsonSlice =
+          startIdx !== -1 && endIdx !== -1
+            ? contentWithoutFences.slice(startIdx, endIdx + 1)
+            : contentWithoutFences;
+        const parsed = JSON.parse(jsonSlice);
+        if (typeof parsed.curl === "string") {
+          curlEncoded = parsed.curl;
+        }
+      } catch (_) {
+        // Fallback to regex extraction
+      }
+
+      if (!curlEncoded) {
+        const match = contentWithoutFences.match(/"curl"\s*:\s*"([^"]+)"/s);
+        if (match && match[1]) {
+          curlEncoded = match[1];
+        }
+      }
+
+      if (!curlEncoded) {
+        await message.reply(
+          "❌ Không tìm thấy trường 'curl' trong tin nhắn được reply."
+        );
+        return;
+      }
+
+      const decoded = decodeGzipMax(curlEncoded);
+
+      // If content is long, send as a single file attachment to avoid multi-message splitting
+      if (decoded.length > 1800) {
+        await message.reply({
+          content:
+            "📄 Nội dung đã giải mã quá dài, gửi kèm file `decoded.txt`.",
+          files: [
+            {
+              attachment: Buffer.from(decoded, "utf8"),
+              name: "decoded.txt",
+            },
+          ],
+          allowedMentions: { repliedUser: false },
+        });
+      } else {
+        await message.reply({
+          content: "```" + decoded + "```",
+          allowedMentions: { repliedUser: false },
+        });
+      }
+    } catch (error) {
+      console.error("Error in !decode:", error);
+      await message.reply(`❌ Lỗi giải mã: ${error.message}`);
+    }
+  }
+
   // Handle food ordering commands
   if (message.content.includes("eat:")) {
     // Check if the message is from the correct channel
@@ -705,11 +804,19 @@ client.on("messageDelete", async (message) => {
 // URL Decoding Functions
 function decodeGzipMax(base64urlStr) {
   try {
-    const buffer = Buffer.from(base64urlStr, "base64url");
-    const decompressed = gunzipSync(buffer);
+    // Try URL-safe base64 first
+    let buffer = Buffer.from(base64urlStr, "base64url");
+    let decompressed = gunzipSync(buffer);
     return decompressed.toString("utf8");
   } catch (error) {
-    throw new Error(`Lỗi giải mã URL: ${error.message}`);
+    // Fallback to standard base64
+    try {
+      const buffer = Buffer.from(base64urlStr, "base64");
+      const decompressed = gunzipSync(buffer);
+      return decompressed.toString("utf8");
+    } catch (e2) {
+      throw new Error(`Lỗi giải mã URL: ${error.message}`);
+    }
   }
 }
 
