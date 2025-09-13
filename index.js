@@ -24,6 +24,15 @@ const client = new Client({
   ],
 });
 
+// Create separate client for decode functionality
+const decodeClient = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
+  ],
+});
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -47,6 +56,12 @@ const activeGames = new Map();
 // Sự kiện khi bot sẵn sàng
 client.on("ready", () => {
   client.user.setActivity("Chào mừng thành viên mới", { type: "WATCHING" });
+});
+
+// Sự kiện khi decode bot sẵn sàng
+decodeClient.on("ready", () => {
+  decodeClient.user.setActivity("Decode Commands", { type: "WATCHING" });
+  console.log(`Decode bot ${decodeClient.user.tag} is ready!`);
 });
 
 // Hàm tạo embed welcome message
@@ -229,142 +244,6 @@ client.on("messageCreate", async (message) => {
     console.log("Test command received from:", message.author.username);
     await message.reply("✅ Bot đang hoạt động bình thường!");
     return;
-  }
-
-  // Handle URL decoding command
-  if (message.content.startsWith("!url")) {
-    console.log("URL command detected:", message.content);
-    const encodedUrl = message.content.substring(5).trim();
-
-    if (!encodedUrl) {
-      await message.reply(
-        "❌ Vui lòng cung cấp URL được mã hóa! Ví dụ: `/url: H4sIAAAAAAACA4WQX0tjQQzFv0roe67t9dbWeXNFdgVxYVfBN8mdm26HbydjJtN2Eb-71P-0hT4EQs7vkMPxRXvAO_h5cQODp6fr3zeX52f3P87-Xtzf_rl6fj5SacVyZWsbAP6CwRqVHwtnw9A5qMejpm6Pa6xnkwabaUs4rceETTua0GnDp566Lx_1GJKDZlxNTqrR60w_1JnoirTjbrMdZOaSzQGlgFEseKo6XlaUWKVaxl08iZqDpjneI6mYOJibpbyrZj_nBW_JouFfiNRj0eBgT0N7XOQ9J3NgvLaj1FN4T-nJzxm9RFPpHUTB18vnq8SRAprSbBY8Zinq2UHJrFvIeyjblLfi1iutelZ8C4ffwu3wyHHpIKl0W8jmVLxhfigOSnyIsopbSIjGuqnCU9_zodccl_IfeZ3YG3eoj2hhwVIMF9nBaDwcDgcvK7TcIpECAAA`"
-      );
-      return;
-    }
-
-    try {
-      console.log(
-        "Attempting to decode URL:",
-        encodedUrl.substring(0, 50) + "..."
-      );
-      const decodedUrl = decodeGzipMax(encodedUrl);
-      console.log("Successfully decoded URL");
-
-      const embed = new EmbedBuilder()
-        .setColor("#00ff00")
-        .setTitle("🔗 URL đã được giải mã")
-        .setDescription(`\`\`\`${decodedUrl}\`\`\``)
-        .setFooter({
-          text: `Giải mã bởi ${message.author.username}`,
-          iconURL: message.author.displayAvatarURL({ dynamic: true }),
-        })
-        .setTimestamp();
-
-      await message.reply({ embeds: [embed] });
-    } catch (error) {
-      console.error("Error decoding URL:", error);
-      await message.reply(`❌ Lỗi giải mã URL: ${error.message}`);
-    }
-  }
-
-  // Handle decode command on replied message containing JSON with "curl"
-  if (message.content.trim() === "!decode") {
-    try {
-      if (!message.reference?.messageId) {
-        await message.reply(
-          "❌ Vui lòng reply vào tin nhắn chứa JSON với trường 'curl' và gõ !decode"
-        );
-        return;
-      }
-
-      const repliedMessage = await message.channel.messages.fetch(
-        message.reference.messageId
-      );
-
-      // Aggregate content from message text and any embeds (description + fields)
-      const embedParts = (repliedMessage.embeds || [])
-        .map((e) => {
-          const desc = e?.description ? String(e.description) : "";
-          const fieldsText = (e?.fields || [])
-            .map((f) => `${f.name ?? ""}\n${f.value ?? ""}`)
-            .join("\n");
-          return [desc, fieldsText].filter(Boolean).join("\n");
-        })
-        .filter((t) => t && t.trim().length > 0);
-      const aggregated = [repliedMessage.content || "", ...embedParts]
-        .filter(Boolean)
-        .join("\n");
-      const rawContent = aggregated.trim();
-      if (!rawContent) {
-        await message.reply(
-          "❌ Tin nhắn được reply không có nội dung văn bản."
-        );
-        return;
-      }
-
-      // Remove code block fences if present
-      const contentWithoutFences = rawContent
-        // Replace fenced code blocks with their inner content
-        .replace(/```[a-zA-Z]*\n([\s\S]*?)```/g, "$1")
-        .trim();
-
-      let curlEncoded;
-      // Try to parse as JSON first
-      try {
-        const startIdx = contentWithoutFences.indexOf("{");
-        const endIdx = contentWithoutFences.lastIndexOf("}");
-        const jsonSlice =
-          startIdx !== -1 && endIdx !== -1
-            ? contentWithoutFences.slice(startIdx, endIdx + 1)
-            : contentWithoutFences;
-        const parsed = JSON.parse(jsonSlice);
-        if (typeof parsed.curl === "string") {
-          curlEncoded = parsed.curl;
-        }
-      } catch (_) {
-        // Fallback to regex extraction
-      }
-
-      if (!curlEncoded) {
-        const match = contentWithoutFences.match(/"curl"\s*:\s*"([^"]+)"/s);
-        if (match && match[1]) {
-          curlEncoded = match[1];
-        }
-      }
-
-      if (!curlEncoded) {
-        await message.reply(
-          "❌ Không tìm thấy trường 'curl' trong tin nhắn được reply."
-        );
-        return;
-      }
-
-      const decoded = decodeGzipMax(curlEncoded);
-
-      // If content is long, send as a single file attachment to avoid multi-message splitting
-      if (decoded.length > 1800) {
-        await message.reply({
-          content:
-            "📄 Nội dung đã giải mã quá dài, gửi kèm file `decoded.txt`.",
-          files: [
-            {
-              attachment: Buffer.from(decoded, "utf8"),
-              name: "decoded.txt",
-            },
-          ],
-          allowedMentions: { repliedUser: false },
-        });
-      } else {
-        await message.reply({
-          content: "```" + decoded + "```",
-          allowedMentions: { repliedUser: false },
-        });
-      }
-    } catch (error) {
-      console.error("Error in !decode:", error);
-      await message.reply(`❌ Lỗi giải mã: ${error.message}`);
-    }
   }
 
   // Handle food ordering commands
@@ -642,10 +521,156 @@ client.on("messageCreate", async (message) => {
   }
 });
 
+// Decode client message handler
+decodeClient.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+
+  // Handle URL decoding command
+  if (message.content.startsWith("!url")) {
+    console.log("URL command detected:", message.content);
+    const encodedUrl = message.content.substring(5).trim();
+
+    if (!encodedUrl) {
+      await message.reply(
+        "❌ Vui lòng cung cấp URL được mã hóa! Ví dụ: `!url H4sIAAAAAAACA4WQX0tjQQzFv0roe67t9dbWeXNFdgVxYVfBN8mdm26HbydjJtN2Eb-71P-0hT4EQs7vkMPxRXvAO_h5cQODp6fr3zeX52f3P87-Xtzf_rl6fj5SacVyZWsbAP6CwRqVHwtnw9A5qMejpm6Pa6xnkwabaUs4rceETTua0GnDp566Lx_1GJKDZlxNTqrR60w_1JnoirTjbrMdZOaSzQGlgFEseKo6XlaUWKVaxl08iZqDpjneI6mYOJibpbyrZj_nBW_JouFfiNRj0eBgT0N7XOQ9J3NgvLaj1FN4T-nJzxm9RFPpHUTB18vnq8SRAprSbBY8Zinq2UHJrFvIeyjblLfi1iutelZ8C4ffwu3wyHHpIKl0W8jmVLxhfigOSnyIsopbSIjGuqnCU9_zodccl_IfeZ3YG3eoj2hhwVIMF9nBaDwcDgcvK7TcIpECAAA`"
+      );
+      return;
+    }
+
+    try {
+      console.log(
+        "Attempting to decode URL:",
+        encodedUrl.substring(0, 50) + "..."
+      );
+      const decodedUrl = decodeGzipMax(encodedUrl);
+      console.log("Successfully decoded URL");
+
+      const embed = new EmbedBuilder()
+        .setColor("#00ff00")
+        .setTitle("🔗 URL đã được giải mã")
+        .setDescription(`\`\`\`${decodedUrl}\`\`\``)
+        .setFooter({
+          text: `Giải mã bởi ${message.author.username}`,
+          iconURL: message.author.displayAvatarURL({ dynamic: true }),
+        })
+        .setTimestamp();
+
+      await message.reply({ embeds: [embed] });
+    } catch (error) {
+      console.error("Error decoding URL:", error);
+      await message.reply(`❌ Lỗi giải mã URL: ${error.message}`);
+    }
+  }
+
+  // Handle decode command on replied message containing JSON with "curl"
+  if (message.content.trim() === "!decode") {
+    try {
+      if (!message.reference?.messageId) {
+        await message.reply(
+          "❌ Vui lòng reply vào tin nhắn chứa JSON với trường 'curl' và gõ !decode"
+        );
+        return;
+      }
+
+      const repliedMessage = await message.channel.messages.fetch(
+        message.reference.messageId
+      );
+
+      // Aggregate content from message text and any embeds (description + fields)
+      const embedParts = (repliedMessage.embeds || [])
+        .map((e) => {
+          const desc = e?.description ? String(e.description) : "";
+          const fieldsText = (e?.fields || [])
+            .map((f) => `${f.name ?? ""}\n${f.value ?? ""}`)
+            .join("\n");
+          return [desc, fieldsText].filter(Boolean).join("\n");
+        })
+        .filter((t) => t && t.trim().length > 0);
+      const aggregated = [repliedMessage.content || "", ...embedParts]
+        .filter(Boolean)
+        .join("\n");
+      const rawContent = aggregated.trim();
+      if (!rawContent) {
+        await message.reply(
+          "❌ Tin nhắn được reply không có nội dung văn bản."
+        );
+        return;
+      }
+
+      // Remove code block fences if present
+      const contentWithoutFences = rawContent
+        // Replace fenced code blocks with their inner content
+        .replace(/```[a-zA-Z]*\n([\s\S]*?)```/g, "$1")
+        .trim();
+
+      let curlEncoded;
+      // Try to parse as JSON first
+      try {
+        const startIdx = contentWithoutFences.indexOf("{");
+        const endIdx = contentWithoutFences.lastIndexOf("}");
+        const jsonSlice =
+          startIdx !== -1 && endIdx !== -1
+            ? contentWithoutFences.slice(startIdx, endIdx + 1)
+            : contentWithoutFences;
+        const parsed = JSON.parse(jsonSlice);
+        if (typeof parsed.curl === "string") {
+          curlEncoded = parsed.curl;
+        }
+      } catch (_) {
+        // Fallback to regex extraction
+      }
+
+      if (!curlEncoded) {
+        const match = contentWithoutFences.match(/"curl"\s*:\s*"([^"]+)"/s);
+        if (match && match[1]) {
+          curlEncoded = match[1];
+        }
+      }
+
+      if (!curlEncoded) {
+        await message.reply(
+          "❌ Không tìm thấy trường 'curl' trong tin nhắn được reply."
+        );
+        return;
+      }
+
+      const decoded = decodeGzipMax(curlEncoded);
+
+      // If content is long, send as a single file attachment to avoid multi-message splitting
+      if (decoded.length > 1800) {
+        await message.reply({
+          content:
+            "📄 Nội dung đã giải mã quá dài, gửi kèm file `decoded.txt`.",
+          files: [
+            {
+              attachment: Buffer.from(decoded, "utf8"),
+              name: "decoded.txt",
+            },
+          ],
+          allowedMentions: { repliedUser: false },
+        });
+      } else {
+        await message.reply({
+          content: "```" + decoded + "```",
+          allowedMentions: { repliedUser: false },
+        });
+      }
+    } catch (error) {
+      console.error("Error in !decode:", error);
+      await message.reply(`❌ Lỗi giải mã: ${error.message}`);
+    }
+  }
+});
+
 // Handle errors
 client.on("error", (error) => {
   // Critical errors should still be logged
   console.error("Discord client error:", error);
+});
+
+// Handle decode client errors
+decodeClient.on("error", (error) => {
+  console.error("Decode client error:", error);
 });
 
 // Add functions from node.js
@@ -829,8 +854,19 @@ module.exports = {
   decodeGzipMax,
 };
 
-// Login the bot
+// Login the bots
 client.login(process.env.DISCORD_TOKEN).catch((error) => {
   // Critical login errors should still be logged
-  console.error("Failed to login:", error);
+  console.error("Failed to login main bot:", error);
 });
+
+// Login the decode bot
+if (process.env.DECODE_BOT_TOKEN) {
+  decodeClient.login(process.env.DECODE_BOT_TOKEN).catch((error) => {
+    console.error("Failed to login decode bot:", error);
+  });
+} else {
+  console.warn(
+    "DECODE_BOT_TOKEN not found. Decode functionality will not be available."
+  );
+}
