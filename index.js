@@ -20,8 +20,6 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
   ],
 });
@@ -69,24 +67,25 @@ function createWelcomeEmbed(member) {
     .setTimestamp();
 }
 
-// Sự kiện khi có thành viên mới tham gia
-client.on("guildMemberAdd", async (member) => {
-  try {
-    const welcomeChannel = config.welcomeChannelIds
-      .map((id) => member.guild.channels.cache.get(id))
-      .find((channel) => channel);
+// Note: GuildMembers intent is required for guildMemberAdd event
+// This functionality is disabled until the intent is enabled in Discord Developer Portal
+// client.on("guildMemberAdd", async (member) => {
+//   try {
+//     const welcomeChannel = config.welcomeChannelIds
+//       .map((id) => member.guild.channels.cache.get(id))
+//       .find((channel) => channel);
 
-    if (welcomeChannel) {
-      const welcomeEmbed = createWelcomeEmbed(member);
-      await welcomeChannel.send({
-        content: `${member} vừa tham gia server! 🎉`,
-        embeds: [welcomeEmbed],
-      });
-    }
-  } catch (error) {
-    console.error("Lỗi trong quá trình xử lý thành viên mới:", error);
-  }
-});
+//     if (welcomeChannel) {
+//       const welcomeEmbed = createWelcomeEmbed(member);
+//       await welcomeChannel.send({
+//         content: `${member} vừa tham gia server! 🎉`,
+//         embeds: [welcomeEmbed],
+//       });
+//     }
+//   } catch (error) {
+//     console.error("Lỗi trong quá trình xử lý thành viên mới:", error);
+//   }
+// });
 
 async function generateTriviaQuestion() {
   const response = await openai.chat.completions.create({
@@ -141,6 +140,10 @@ async function generateTriviaQuestion() {
 // Sự kiện khi nhận tin nhắn
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
+
+  // Note: MessageContent intent is required to read message content
+  // The bot can only respond to messages that mention it or are in DMs
+  if (!message.mentions.has(client.user) && message.guild) return;
 
   if (message.content.startsWith("!quiz")) {
     const args = message.content.split(" ");
